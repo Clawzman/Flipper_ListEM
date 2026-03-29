@@ -185,8 +185,6 @@ typedef struct {
     uint8_t hold_ticks;
 } AppState;
 
-/* ===================== PATH HELPERS ===================== */
-
 static const char* base_path(ProtocolType t) {
     if(t == ProtocolRFID) return "/ext/lfrfid_fuzzer/ListEM";
     if(t == ProtocolNFC)  return "/ext/mifare_fuzzer/ListEM";
@@ -226,11 +224,6 @@ static int32_t generate_worker(void* ctx) {
         (s->mode == GenModeStructured)  ? "structured" :
                                          "random";
                                          
-
-
-                                         
-
-/* ===================== PREFIX STRING (FILENAME) ===================== */
 
 char prefix_part[64] = "noprefix";
 bool has_prefix = false;
@@ -302,9 +295,7 @@ if(s->per_prefix && p->prefix_count > 0) {
         prefix_index = (i / block) % enabled;
     }
 }
-        
-
-        /* ================= BASE GENERATION ================= */
+      
 
 if(s->mode == GenModeSequential) {
 
@@ -371,8 +362,6 @@ else if(s->mode == GenModeStructured && p->bytes > 1) {
     uint8_t seq_bytes = (rem_bytes > 1) ? (rem_bytes - 1) : rem_bytes;
 
 
-   /* ================= SEGMENTED STRUCTURE ================= */
-
 uint8_t total_bits = (seq_bytes * 8);
 uint8_t card_bits = total_bits / 2;
 uint8_t facility_bits = total_bits - card_bits;
@@ -390,8 +379,6 @@ uint64_t base = (facility << card_bits) | card;
         id = base;
     }
 }
-
-/* ================= RANDOM ================= */
 
 else {
     uint64_t r = ((uint64_t)rand() << 32) | rand();
@@ -419,8 +406,6 @@ else {
                 }
             }
         }
-
-        /* ================= PREFIX APPLY ============================= */
 
         if(p->prefix_count > 0) {
             uint8_t usable[MAX_PREFIXES];
@@ -460,8 +445,6 @@ else {
             }
         }
 
-        /* ================= COLLISION REUSE ================= */
-
         if(
             s->mode == GenModeFuzz &&
             s->collision_enabled &&
@@ -471,8 +454,6 @@ else {
             id = s->collision_pool[rand() % s->collision_pool_size];
         }
 
-        /* ================= STORE COLLISION SAMPLES ================= */
-
         if(
             s->mode == GenModeFuzz &&
             s->collision_enabled &&
@@ -480,8 +461,6 @@ else {
         ) {
             s->collision_pool[s->collision_pool_size++] = id;
         }
-
-        /* ================= WRITE OUTPUT ================= */
 
         char line[40];
         snprintf(line, sizeof(line), "%0*llX\n", p->bytes * 2, id);
