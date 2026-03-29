@@ -19,6 +19,7 @@ typedef enum {
     GenModeRandom = 0,
     GenModeSequential,
     GenModeFuzz,
+    GenModeStructured,
     GenModeCount,
 } GenerationMode;
 
@@ -35,6 +36,7 @@ typedef enum {
     SubmenuNone,
     SubmenuSequential,
     SubmenuFuzz,
+    SubmenuStructured,
 } SubmenuType;
 
 typedef enum {
@@ -51,6 +53,12 @@ typedef enum {
     FuzzPreserve,
     FuzzCollision,
 } FuzzFocus;
+
+typedef enum {
+    StructSeq = 0,
+    StructRand,
+    StructTypeCount,
+} StructType;
 
 typedef struct {
     const char* name;
@@ -130,6 +138,13 @@ static const Protocol protocols[] = {
 #define COUNT_STEP 1000
 #define MAX_IDS 300000
 
+static const uint8_t STRUCT_TAILS[] = {
+    0x00, 0x01, 0x02, 0x10, 0x20,
+    0xFF, 0xAA, 0x55
+};
+
+#define STRUCT_TAIL_COUNT (sizeof(STRUCT_TAILS))
+
 /* ===================== APP STATE ===================== */
 
 typedef struct {
@@ -138,6 +153,7 @@ typedef struct {
     bool run;
 
     GenerationMode mode;
+    StructType structured_type;
     UiFocus focus;
     SubmenuType submenu;
 
@@ -207,6 +223,7 @@ static int32_t generate_worker(void* ctx) {
     const char* mode_str =
         (s->mode == GenModeSequential) ? "sequential" :
         (s->mode == GenModeFuzz)       ? "fuzz" :
+        (s->mode == GenModeStructured)  ? "structured" :
                                          "random";
                                          
 
@@ -290,6 +307,7 @@ if(s->per_prefix && p->prefix_count > 0) {
         /* ================= BASE GENERATION ================= */
 
 if(s->mode == GenModeSequential) {
+
     uint64_t offset = (uint64_t)i * s->seq_step;
 
     uint64_t start =
@@ -297,22 +315,91 @@ if(s->mode == GenModeSequential) {
             ? (p->max ? p->max : ((1ULL << (p->bytes * 8)) - 1))
             : s->seq_start;
 
+    uint64_t seq;
+
     if(!s->seq_reverse) {
-        id = start + offset;
+        seq = start + offset;
     } else {
         if(start > offset)
-            id = start - offset;
+            seq = start - offset;
         else
-            id = 0;
+            seq = 0;
+    }
+
+    id = seq;
+}
+
+/* ================= STRUCTURED ================= */
+
+else if(s->mode == GenModeStructured && p->bytes > 1) {
+
+    uint32_t tail_index = i % STRUCT_TAIL_COUNT;
+
+    uint32_t seq_index;
+
+    if(s->structured_type == StructSeq) {
+        seq_index = i / STRUCT_TAIL_COUNT;
+    } else {
+        uint32_t x = i / STRUCT_TAIL_COUNT;
+
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+
+        seq_index = x;
+    }
+
+    uint64_t offset = (uint64_t)seq_index * s->seq_step;
+
+    uint64_t start =
+        s->seq_reverse
+            ? (p->max ? p->max : ((1ULL << (p->bytes * 8)) - 1))
+            : s->seq_start;
+
+    uint64_t seq;
+
+    if(!s->seq_reverse) {
+        seq = start + offset;
+    } else {
+        if(start > offset)
+            seq = start - offset;
+        else
+            seq = 0;
+    }
+
+    uint8_t rem_bytes = p->bytes - 1;
+    uint8_t seq_bytes = (rem_bytes > 1) ? (rem_bytes - 1) : rem_bytes;
+
+
+   /* ================= SEGMENTED STRUCTURE ================= */
+
+uint8_t total_bits = (seq_bytes * 8);
+uint8_t card_bits = total_bits / 2;
+uint8_t facility_bits = total_bits - card_bits;
+uint64_t card_mask = (1ULL << card_bits) - 1;
+uint64_t facility_mask = (1ULL << facility_bits) - 1;
+uint64_t card = seq & card_mask;
+uint64_t facility = (seq >> card_bits) & facility_mask;
+uint64_t base = (facility << card_bits) | card;
+
+    uint8_t tail = STRUCT_TAILS[tail_index];
+
+    if(rem_bytes > 1) {
+        id = (base << 8) | tail;
+    } else {
+        id = base;
     }
 }
-        
-        else {
-            uint64_t r = ((uint64_t)rand() << 32) | rand();
-            id = r & max;
-        }
 
-        /* ================= FUZZ MUTATIONS ================= */
+/* ================= RANDOM ================= */
+
+else {
+    uint64_t r = ((uint64_t)rand() << 32) | rand();
+    id = r & max;
+}
+
+
+/* ================= FUZZ MUTATIONS ================= */
 
         if(s->mode == GenModeFuzz) {
             if(s->fuzz_boundary) {
@@ -333,7 +420,7 @@ if(s->mode == GenModeSequential) {
             }
         }
 
-        /* ================= PREFIX APPLY ================= */
+        /* ================= PREFIX APPLY ============================= */
 
         if(p->prefix_count > 0) {
             uint8_t usable[MAX_PREFIXES];
@@ -344,9 +431,26 @@ if(s->mode == GenModeSequential) {
                     usable[n++] = p->prefixes[j];
 
             if(n > 0) {
-                uint8_t prefix = usable[
-                    s->per_prefix ? (prefix_index % n) : (rand() % n)
-                   ];
+                uint8_t prefix;
+
+if(s->mode == GenModeStructured) {
+    
+    
+    /*======================= COMBINATORIAL PREFIX ===============*/
+
+
+
+    uint32_t block_size = STRUCT_TAIL_COUNT * 32;
+
+uint32_t comb_prefix_index = (i / block_size) % n;
+prefix = usable[comb_prefix_index];
+
+}
+else {
+    prefix = usable[
+        s->per_prefix ? (prefix_index % n) : (rand() % n)
+    ];
+}
                 uint8_t rem = p->bytes - 1;
 
                 if(s->mode != GenModeFuzz || s->fuzz_preserve) {
@@ -495,6 +599,36 @@ if(s->submenu == SubmenuSequential) {
 
         return;
     }
+    
+    
+
+   if(s->submenu == SubmenuStructured) {
+
+    canvas_draw_str(c, 2, 12, "Structured Type");
+
+    for(uint8_t i = 0; i < StructTypeCount; i++) {
+
+        char line[32];
+
+        const char* name =
+            (i == StructSeq) ? "Sequential" : "Random";
+
+        snprintf(
+            line,
+            sizeof(line),
+            "%c [%c] %s",
+            (i == s->structured_type) ? '>' : ' ',
+            (i == s->structured_type) ? 'X' : ' ',
+            name
+        );
+
+        canvas_draw_str(c, 2, 24 + i * 12, line);
+    }
+
+    return;
+}
+
+    
 
     int y=12;
 #define ROW(id,text) \
@@ -505,6 +639,7 @@ if(s->submenu == SubmenuSequential) {
     snprintf(line,sizeof(line),"Protocol: %s",p->name); ROW(FocusProtocol,line);
     snprintf(line,sizeof(line),"Mode: %s",
         s->mode==GenModeFuzz?"Fuzz":
+        s->mode==GenModeStructured?"Structured":
         s->mode==GenModeSequential?"Sequential":"Random");
     ROW(FocusMode,line);
     snprintf(line,sizeof(line),"IDs: %lu",s->count); ROW(FocusCount,line);
@@ -623,6 +758,24 @@ if(s->submenu == SubmenuFuzz) {
     return;
 }
 
+if(s->submenu == SubmenuStructured) {
+
+    if(e->key == InputKeyUp && s->structured_type > 0) {
+        s->structured_type--;
+    }
+
+    else if(e->key == InputKeyDown && s->structured_type < StructTypeCount - 1) {
+        s->structured_type++;
+    }
+
+    else if(e->key == InputKeyBack) {
+        s->submenu = SubmenuNone;
+        s->focus = FocusMode;
+    }
+
+    return;
+}
+
 
     if(e->key==InputKeyUp && s->focus > 0) {
     s->focus--;
@@ -674,6 +827,8 @@ else if(e->key==InputKeyRight) {
             } else if(s->mode==GenModeFuzz) {
                 s->submenu=SubmenuFuzz;
                 s->fuzz_focus=FuzzBoundary;
+            } else if(s->mode==GenModeStructured) {
+                s->submenu=SubmenuStructured;
             }
         }
         else if(s->focus==FocusPrefixes && p->prefix_count>0) {
@@ -705,7 +860,7 @@ int32_t rfid_fuzzer_app(void* p) {
 
     AppState s = {
         .proto=0,.count=30000,.run=true,
-        .mode=GenModeSequential,.focus=FocusProtocol,
+        .mode=GenModeSequential,.structured_type = StructSeq,.focus=FocusProtocol,
         .seq_start=0,.seq_step=1,
         .seq_reverse = false,
         .fuzz_boundary=true,.fuzz_bitflip=true,
