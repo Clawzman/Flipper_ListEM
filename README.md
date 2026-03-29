@@ -23,7 +23,7 @@ Now with **Fuzzing Mode / Bit Mutation engine!** A real, usable reader testing F
 - **Engine Upgrade**
   - Prefix × Sequence × Tail generation
   - Better coverage of UID distributions
-  - More efficient brute-force lists
+  - More efficient brute force lists
 
 - General improvements & code cleanup
 
@@ -124,8 +124,7 @@ A smart generator that produces structured ID lists optimized for efficient brut
 It follows patterns like:
 Vendor/Type:Facility:Card Number:Tail
 
-Example: 04 | 12 34 | 00 01
-         A1 | 00 7F | 12 34
+Example: 04 | 12 34 | 00 01 / A1 | 00 7F | 12 34
          
 This allows to:
  - Explore UID ranges more efficiently
